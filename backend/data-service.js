@@ -92,3 +92,84 @@ export async function deleteRoutine(userId, routineId) {
         throw new Error("Failed to delete routine.");
     }
 }
+
+const LOGS_PATH = "logs";
+
+// 5. CREATE Behavior Log (C)
+/**
+ * Adds a new behavior log entry to the database under the user's ID.
+ * @param {string} userId - The unique ID of the user (Caregiver) creating the log.
+ * @param {object} logData - The log object containing data, time, mood, tags, etc.
+ * @returns {Promise<string>} The ID of the newly created log entry.
+ */
+export async function addLog(userId, logData) {
+    try {
+        const userLogsRef = ref(db, `${LOGS_PATH}/${userId}`);
+        const newLogRef = push(userLogsRef);
+        await set(newLogRef, { 
+            ...logData,
+            timestamp: Date.now() // Always add a server-side timestamp
+        });
+        return newLogRef.key;
+    } catch (error) {
+        console.error("Error creating log:", error);
+        throw new Error("Failed to add new behavior log.");
+    }
+}
+
+// 6. READ Behavior Logs (R)
+/**
+ * Fetches all behavior log entries for a specific user.
+ * @param {string} userId - The unique ID of the user.
+ * @returns {Promise<object | null>} An object of log entries keyed by their IDs, or null.
+ */
+export async function getLogsByUserId(userId) {
+    try {
+        const dbRef = ref(db);
+        const logsSnapshot = await get(child(dbRef, `${LOGS_PATH}/${userId}`));
+        
+        if (logsSnapshot.exists()) {
+            return logsSnapshot.val(); 
+        } else {
+            return null;
+        }
+    } catch (error) {
+        console.error("Error fetching logs:", error);
+        throw new Error("Failed to read behavior logs.");
+    }
+}
+
+// 7. UPDATE Behavior Log (U)
+
+/**
+ * Updates specific fields for an existing log entry.
+ * @param {string} userId - The unique ID of the user.
+ * @param {string} logId - The unique ID of the log entry to update.
+ * @param {object} updatedFields - An object containing the fields to change.
+ */
+export async function updateLog(userId, logId, updatedFields) {
+    try {
+        const logRef = ref(db, `${LOGS_PATH}/${userId}/${logId}`);
+        await update(logRef, updatedFields);
+    } catch (error) {
+        console.error("Error updating log:", error);
+        throw new Error("Failed to update log entry.");
+    }
+}
+
+// 8. DELETE Behavior Log (D)
+
+/**
+ * Deletes a behavior log entry from the database.
+ * @param {string} userId - The unique ID of the user.
+ * @param {string} logId - The unique ID of the log entry to delete.
+ */
+export async function deleteLog(userId, logId) {
+    try {
+        const logRef = ref(db, `${LOGS_PATH}/${userId}/${logId}`);
+        await remove(logRef);
+    } catch (error) {
+        console.error("Error deleting log:", error);
+        throw new Error("Failed to delete log entry.");
+    }
+}
