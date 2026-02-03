@@ -1,59 +1,56 @@
 import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 import { generateWeeklyReport } from "@/backend/report-service";
-import { adminStorage } from "@/lib/firebase-admin";
 import { sendSMS } from "@/backend/notification-service";
+import { getFirebaseAdmin } from "@/lib/firebase-admin";
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { patientId, logs, contactPhone } = body; // Added contactPhone
+    const { patientId, logs } = await request.json();
 
-    console.log(`Generating report for ${patientId}...`);
+    if (!patientId || !Array.isArray(logs)) {
+      return NextResponse.json(
+        { error: "patientId and logs are required" },
+        { status: 400 }
+      );
+    }
 
-    // 1. Generate PDF
+    const admin = getFirebaseAdmin();
+    if (!admin) {
+      return NextResponse.json(
+        { error: "Firebase not configured" },
+        { status: 503 }
+      );
+    }
+
+    const bucket = admin.storage().bucket();
+
     const pdfBuffer = await generateWeeklyReport(patientId, logs);
 
-    // 2. Upload to Firebase Storage
-    const bucket = adminStorage.bucket();
-    const filename = `reports/${patientId}/${Date.now()}-weekly.pdf`;
-    const file = bucket.file(filename);
+    const file = bucket.file(`reports/${patientId}-${Date.now()}.pdf`);
+    await file.save(pdfBuffer, { contentType: "application/pdf" });
 
-    await file.save(pdfBuffer as Buffer, {
-      metadata: { contentType: 'application/pdf' },
+    const [signedUrl] = await file.getSignedUrl({
+      action: "read",
+      expires: Date.now() + 1000 * 60 * 60,
     });
 
-    // 3. Get Download Link (Valid for 7 days)
-    const [downloadUrl] = await file.getSignedUrl({
-      action: 'read',
-      expires: Date.now() + 7 * 24 * 60 * 60 * 1000, 
-    });
-
-    console.log("Report uploaded:", downloadUrl);
-
-    // 4. Send SMS if phone number is provided
-    let smsResult = "No phone provided";
-    if (contactPhone) {
-      console.log(`Sending SMS to ${contactPhone}...`);
+    if (process.env.ADMIN_PHONE_NUMBER) {
       await sendSMS(
-        contactPhone, 
-        `NeuroSync Alert: Your weekly patient report is ready. Download here: ${downloadUrl}`
+        process.env.ADMIN_PHONE_NUMBER,
+        `Weekly report ready for ${patientId}: ${signedUrl}`
       );
-      smsResult = "Sent";
     }
 
-    return NextResponse.json({ 
-      success: true, 
-      message: "Report generated, uploaded, and sent.",
-      downloadUrl,
-      smsStatus: smsResult
+    return NextResponse.json({
+      success: true,
+      url: signedUrl,
     });
-
-  } catch (error: unknown) {
-    if (error instanceof Error) {
-      console.error("Report Flow Error:", error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-    console.error("Report Flow Error:", String(error));
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+  } catch (error: any) {
+    console.error("Report API failed:", error);
+    return NextResponse.json(
+      { error: error.message ?? "Report generation failed" },
+      { status: 500 }
+    );
   }
 }
